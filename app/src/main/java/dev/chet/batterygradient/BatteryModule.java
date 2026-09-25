@@ -6,8 +6,6 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.database.ContentObserver;
 import android.os.BatteryManager;
-import android.os.Handler;
-import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
@@ -25,7 +23,6 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public final class BatteryModule implements IXposedHookLoadPackage {
     private static final String UI = "com.android.systemui";
     private static final Map<ViewGroup, Holder> HOLDERS = new WeakHashMap<>();
-    private static final Handler MAIN = new Handler(Looper.getMainLooper());
 
     @Override public void handleLoadPackage(XC_LoadPackage.LoadPackageParam param) {
         if (!UI.equals(param.packageName)) return;
@@ -198,8 +195,12 @@ public final class BatteryModule implements IXposedHookLoadPackage {
                 hideNative();
             }
         };
-        final ContentObserver styleObserver = new ContentObserver(MAIN) {
-            @Override public void onChange(boolean selfChange) { readStyle(); }
+        final ContentObserver styleObserver = new ContentObserver(null) {
+            @Override public void onChange(boolean selfChange) {
+                // Vector can instantiate the module in the zygote, before a main
+                // looper exists. Schedule UI work only after the view is attached.
+                group.post(() -> readStyle());
+            }
         };
         boolean listening;
 
