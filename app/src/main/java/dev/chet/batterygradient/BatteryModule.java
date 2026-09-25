@@ -8,6 +8,7 @@ import android.database.ContentObserver;
 import android.os.BatteryManager;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import java.util.IdentityHashMap;
@@ -23,6 +24,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public final class BatteryModule implements IXposedHookLoadPackage {
     private static final String UI = "com.android.systemui";
     private static final Map<ViewGroup, Holder> HOLDERS = new WeakHashMap<>();
+    private static final Map<View, ViewTreeObserver.OnGlobalLayoutListener> ROOT_LISTENERS = new WeakHashMap<>();
 
     @Override public void handleLoadPackage(XC_LoadPackage.LoadPackageParam param) {
         if (!UI.equals(param.packageName)) return;
@@ -46,6 +48,7 @@ public final class BatteryModule implements IXposedHookLoadPackage {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     try {
                         View root = (View) XposedHelpers.getObjectField(p.thisObject, "mView");
+                        stopWatching(root);
                         ViewGroup container = findSystemIcons(root);
                         if (container != null) uninstall(container);
                     } catch (Throwable ignored) { }
@@ -164,6 +167,7 @@ public final class BatteryModule implements IXposedHookLoadPackage {
             Holder holder = new Holder(container, false, stock);
             HOLDERS.put(container, holder);
             holder.attach();
+            watch(root);
             XposedBridge.log("BatteryGradient: status bar icon attached");
             report("Status bar icon attached");
         } catch (Throwable error) {
@@ -172,6 +176,29 @@ public final class BatteryModule implements IXposedHookLoadPackage {
             ViewGroup group = findSystemIcons(root);
             if (group != null) uninstall(group);
         }
+    }
+
+    /** Track layout reinflation and Iconify's movement of the native battery between rows. */
+    private static void watch(View root) {
+        if (ROOT_LISTENERS.containsKey(root)) return;
+        ViewTreeObserver.OnGlobalLayoutListener listener = () -> {
+            ViewGroup container = findSystemIcons(root);
+            if (container == null) return;
+            Holder holder = HOLDERS.get(container);
+            if (holder == null) {
+                installInStatusBar(root);
+                return;
+            }
+            holder.moveToActiveRow();
+        };
+        ROOT_LISTENERS.put(root, listener);
+        root.getViewTreeObserver().addOnGlobalLayoutListener(listener);
+    }
+
+    private static void stopWatching(View root) {
+        ViewTreeObserver.OnGlobalLayoutListener listener = ROOT_LISTENERS.remove(root);
+        if (listener != null && root.getViewTreeObserver().isAlive())
+            root.getViewTreeObserver().removeOnGlobalLayoutListener(listener);
     }
 
     private static final class Holder {
@@ -203,6 +230,7 @@ public final class BatteryModule implements IXposedHookLoadPackage {
             }
         };
         boolean listening;
+        ViewGroup iconRow;
 
         Holder(ViewGroup group, boolean insideStockBattery, View stockBattery) {
             this.group = group;
@@ -217,7 +245,9 @@ public final class BatteryModule implements IXposedHookLoadPackage {
         void attach() {
             Context context = group.getContext();
             int px = Math.round(24 * context.getResources().getDisplayMetrics().density);
-            if (group instanceof LinearLayout) {
+            if (!insideStockBattery) {
+                moveToActiveRow();
+            } else if (group instanceof LinearLayout) {
                 LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(px, px);
                 lp.gravity = android.view.Gravity.CENTER_VERTICAL;
                 group.addView(icon, 0, lp);
@@ -231,6 +261,32 @@ public final class BatteryModule implements IXposedHookLoadPackage {
             context.registerReceiver(batteryReceiver,
                     new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
             listening = true;
+        }
+
+        void moveToActiveRow() {
+            // Iconify can move the stock BatteryMeterView into either row. Follow its
+            // actual parent, without depending on Iconify preference keys or IDs.
+            ViewGroup target = group;
+            if (stockBattery != null && stockBattery.getParent() instanceof ViewGroup) {
+                ViewGroup parent = (ViewGroup) stockBattery.getParent();
+                if (parent.isAttachedToWindow()) target = parent;
+            }
+            int last = target.getChildCount() - 1;
+            boolean rightmost = icon.getParent() == target &&
+                    target.indexOfChild(icon) == (target.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL ? 0 : last);
+            if (rightmost) return;
+            if (icon.getParent() instanceof ViewGroup)
+                ((ViewGroup) icon.getParent()).removeView(icon);
+            int px = Math.round(24 * group.getResources().getDisplayMetrics().density);
+            int index = target.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL ? 0 : target.getChildCount();
+            if (target instanceof LinearLayout) {
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(px, px);
+                lp.gravity = android.view.Gravity.CENTER_VERTICAL;
+                target.addView(icon, index, lp);
+            } else {
+                target.addView(icon, index, new ViewGroup.LayoutParams(px, px));
+            }
+            iconRow = target;
         }
 
         void readStyle() { drawable.setStyle(SettingsProvider.getStyle(group.getContext())); }
@@ -259,7 +315,8 @@ public final class BatteryModule implements IXposedHookLoadPackage {
             }
             try { context.getContentResolver().unregisterContentObserver(styleObserver); }
             catch (Throwable ignored) { }
-            if (icon.getParent() == group) group.removeView(icon);
+            if (icon.getParent() instanceof ViewGroup)
+                ((ViewGroup) icon.getParent()).removeView(icon);
             for (Map.Entry<View, Integer> entry : nativeVisibility.entrySet()) {
                 if (entry.getKey().getParent() != null)
                     entry.getKey().setVisibility(entry.getValue());
