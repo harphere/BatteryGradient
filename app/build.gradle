@@ -15,8 +15,8 @@ android {
         applicationId 'dev.chet.batterygradient'
         minSdk 31
         targetSdk 28
-        versionCode 2
-        versionName '1.0.1'
+        versionCode Integer.parseInt(project.property('batteryVersionCode').toString())
+        versionName project.property('batteryVersionName').toString()
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

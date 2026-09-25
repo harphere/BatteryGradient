@@ -6,6 +6,8 @@ import android.content.IntentFilter;
 import android.graphics.Color;
 import android.os.BatteryManager;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.ImageView;
@@ -17,6 +19,15 @@ import android.widget.TextView;
 
 public final class SettingsActivity extends Activity {
     private final GradientBatteryDrawable preview = new GradientBatteryDrawable();
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private TextView statusView;
+    private final Runnable refreshStatus = new Runnable() {
+        @Override public void run() {
+            if (statusView != null) statusView.setText("System UI: "
+                    + SettingsProvider.getStatus(SettingsActivity.this));
+            main.postDelayed(this, 2000);
+        }
+    };
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -91,6 +102,20 @@ public final class SettingsActivity extends Activity {
                 + "Restart System UI once after enabling the module. Style changes apply live.", 14);
         note.setPadding(0, dp(24), 0, 0);
         root.addView(note);
+        statusView = text("System UI: Checking module status…", 14);
+        statusView.setPadding(0, dp(20), 0, 0);
+        root.addView(statusView);
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        main.removeCallbacks(refreshStatus);
+        main.post(refreshStatus);
+    }
+
+    @Override protected void onPause() {
+        main.removeCallbacks(refreshStatus);
+        super.onPause();
     }
 
     private TextView text(String value, int size) {

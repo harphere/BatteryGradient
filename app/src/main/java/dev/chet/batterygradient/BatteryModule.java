@@ -40,6 +40,8 @@ public final class BatteryModule implements IXposedHookLoadPackage {
                         if (root != null) root.post(() -> installInStatusBar(root));
                     } catch (Throwable error) {
                         XposedBridge.log("BatteryGradient: status bar attach unavailable: " + error);
+                        report("Status bar controller view unavailable: "
+                                + error.getClass().getSimpleName());
                     }
                 }
             });
@@ -53,13 +55,17 @@ public final class BatteryModule implements IXposedHookLoadPackage {
                 }
             });
             XposedBridge.log("BatteryGradient: PhoneStatusBarViewController hook ready");
-            return;
+            report("Status bar controller hook installed");
         }
-        XposedBridge.log("BatteryGradient: status bar controller absent; trying legacy battery view");
+        if (controller == null) {
+            XposedBridge.log("BatteryGradient: status bar controller absent; trying battery view");
+            report("Status bar controller absent; trying battery view");
+        }
         Class<?> battery = XposedHelpers.findClassIfExists(
                 "com.android.systemui.battery.BatteryMeterView", param.classLoader);
         if (battery == null) {
-            XposedBridge.log("BatteryGradient: BatteryMeterView absent; no hook installed");
+            XposedBridge.log("BatteryGradient: BatteryMeterView absent");
+            if (controller == null) report("Neither status bar hook class was found");
             return;
         }
         XposedBridge.hookAllMethods(battery, "onAttachedToWindow", new XC_MethodHook() {
@@ -92,18 +98,40 @@ public final class BatteryModule implements IXposedHookLoadPackage {
             } catch (Throwable ignored) { /* ROM-specific method absent. */ }
         }
         XposedBridge.log("BatteryGradient: battery hook ready");
+        if (controller == null) report("Battery view hook installed");
+    }
+
+    private static void report(String message) {
+        try {
+            Object app = XposedHelpers.callStaticMethod(
+                    XposedHelpers.findClass("android.app.ActivityThread", null),
+                    "currentApplication");
+            if (app instanceof Context) SettingsProvider.report((Context) app, message);
+        } catch (Throwable error) {
+            XposedBridge.log("BatteryGradient: diagnostic report unavailable: " + error);
+        }
     }
 
     private static void install(ViewGroup group) {
         try {
             if (!group.isAttachedToWindow() || HOLDERS.containsKey(group)) return;
+            for (View parent = group.getParent() instanceof View
+                    ? (View) group.getParent() : null; parent != null;
+                    parent = parent.getParent() instanceof View ? (View) parent.getParent() : null) {
+                if (parent instanceof ViewGroup && HOLDERS.containsKey(parent)) return;
+            }
             // Preserve ROMs with an unexpected empty battery container.
-            if (group.getChildCount() == 0) return;
+            if (group.getChildCount() == 0) {
+                report("Battery view attached, but has no child icon");
+                return;
+            }
             Holder holder = new Holder(group, true, null);
             HOLDERS.put(group, holder);
             holder.attach();
+            report("Battery view icon attached");
         } catch (Throwable error) {
             XposedBridge.log("BatteryGradient: battery view left unchanged: " + error);
+            report("Battery view attach failed: " + error.getClass().getSimpleName());
             uninstall(group);
         }
     }
@@ -122,10 +150,16 @@ public final class BatteryModule implements IXposedHookLoadPackage {
 
     private static void installInStatusBar(View root) {
         try {
-            if (!root.isAttachedToWindow()) return;
+            if (!root.isAttachedToWindow()) {
+                report("Status bar root has not attached");
+                return;
+            }
             ViewGroup container = findSystemIcons(root);
             if (container == null || HOLDERS.containsKey(container)) {
-                if (container == null) XposedBridge.log("BatteryGradient: system_icons container absent");
+                if (container == null) {
+                    XposedBridge.log("BatteryGradient: system_icons container absent");
+                    report("Status bar attached; system_icons not found");
+                }
                 return;
             }
             int batteryId = root.getResources().getIdentifier("battery", "id", UI);
@@ -134,8 +168,10 @@ public final class BatteryModule implements IXposedHookLoadPackage {
             HOLDERS.put(container, holder);
             holder.attach();
             XposedBridge.log("BatteryGradient: status bar icon attached");
+            report("Status bar icon attached");
         } catch (Throwable error) {
             XposedBridge.log("BatteryGradient: status bar icon unavailable: " + error);
+            report("Status bar attach failed: " + error.getClass().getSimpleName());
             ViewGroup group = findSystemIcons(root);
             if (group != null) uninstall(group);
         }

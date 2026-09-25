@@ -1,4 +1,4 @@
-# Battery Gradient 1.0.1
+# Battery Gradient 1.0.3
 
 Standalone **LSPosed** battery icon module for Pixel/AOSP SystemUI. Intended for
 Android 16 on Pixel 8 Pro with Infinity-X; also targets Android 12 and later.
@@ -20,9 +20,14 @@ Magisk overlay are used by this APK.
 1. Create an empty GitHub repository and upload the **contents of this folder**
    at the repository root. Keep `.github/workflows/build.yml` in place.
 2. Open **Actions → Build Battery Gradient APK → Run workflow**.
-3. When the job finishes, open its run and download the
-   **BatteryGradient-v1.0.1-APK** artifact at the bottom of the run summary.
-   Unzip that GitHub artifact and install `app-debug.apk` on the phone.
+3. When the job finishes, open its run and download the artifact named
+   **BatteryGradient-v1.0.3-runNUMBER-attemptNUMBER-APK** at the bottom of the
+   run summary. Inside is an APK named
+   `BatteryGradient-v1.0.3-runNUMBER-attemptNUMBER-debug.apk`.
+
+The app's version name and code live in `gradle.properties`. The workflow reads
+that version for both the artifact and APK filename; each Actions run and
+rerun gets its own run and attempt number.
 
 The build uses Java 17, Gradle 8.11.1, Android Gradle Plugin 8.7.3, Android
 platform 35 and build tools 35.0.0. The runner's existing command-line SDK
@@ -33,13 +38,13 @@ upgradable. Do not treat this key as a production signing secret.
 
 **Upgrading from 1.0.0:** GitHub may sign the old APK with a different temporary
 debug key. If Android rejects the update with a signing or update-incompatible
-error, uninstall Battery Gradient 1.0.0, install 1.0.1, re-enable its System UI
+error, uninstall Battery Gradient 1.0.0, install 1.0.3, re-enable its System UI
 scope in LSPosed, and restart System UI. Later builds from this source use the
-same debug signing key.
+same debug signing key. Versions 1.0.1 and 1.0.2 can update directly to 1.0.3.
 
 ## Install and use
 
-1. Install `app-debug.apk`, then enable **Battery Gradient** in LSPosed.
+1. Install the versioned debug APK, then enable **Battery Gradient** in LSPosed.
 2. Scope it to **System UI** (`com.android.systemui`) only.
 3. Restart System UI once (or reboot) after enabling the module.
 4. Open **Battery Gradient** in your launcher and choose a style. Later style
@@ -57,8 +62,12 @@ native children when that view detaches. It does not install an overlay.
 ## Compatibility notes
 
 The primary hook targets `PhoneStatusBarViewController.onViewAttached` and adds
-the icon to `system_icons`. If that controller does not exist, it falls back to
-`BatteryMeterView`. If both are absent on a ROM, no icon can be added. There is no device
+the icon to `system_icons`. The `BatteryMeterView` hook is also active as a
+fallback when the controller exists but its view path differs. Open the app
+after reboot and read **System UI:** at the bottom. If it says "No System UI
+event received yet", verify that the LSPosed module and its System UI scope
+are enabled. Otherwise share that line and the LSPosed log lines containing
+`BatteryGradient` for diagnosis. There is no device
 build/test in this package; a successful Actions compile does not prove
 behavior on a specific Infinity-X release. If it does not appear, capture
 LSPosed logs containing `BatteryGradient` and your Android/ROM build details.
