@@ -1,4 +1,4 @@
-# Battery Gradient 1.0.0
+# Battery Gradient 1.0.1
 
 Standalone **LSPosed** battery icon module for Pixel/AOSP SystemUI. Intended for
 Android 16 on Pixel 8 Pro with Infinity-X; also targets Android 12 and later.
@@ -21,14 +21,21 @@ Magisk overlay are used by this APK.
    at the repository root. Keep `.github/workflows/build.yml` in place.
 2. Open **Actions → Build Battery Gradient APK → Run workflow**.
 3. When the job finishes, open its run and download the
-   **BatteryGradient-v1.0.0-APK** artifact at the bottom of the run summary.
+   **BatteryGradient-v1.0.1-APK** artifact at the bottom of the run summary.
    Unzip that GitHub artifact and install `app-debug.apk` on the phone.
 
 The build uses Java 17, Gradle 8.11.1, Android Gradle Plugin 8.7.3, Android
 platform 35 and build tools 35.0.0. The runner's existing command-line SDK
 installs the exact platform and build-tools packages. No `tools` package or
 `android-actions/setup-android` invocation appears in this workflow. The APK
-is Android's automatically signed **debug APK**, so it is installable directly.
+uses a bundled, openly shared **debug-only signing key** to keep future builds
+upgradable. Do not treat this key as a production signing secret.
+
+**Upgrading from 1.0.0:** GitHub may sign the old APK with a different temporary
+debug key. If Android rejects the update with a signing or update-incompatible
+error, uninstall Battery Gradient 1.0.0, install 1.0.1, re-enable its System UI
+scope in LSPosed, and restart System UI. Later builds from this source use the
+same debug signing key.
 
 ## Install and use
 
@@ -49,9 +56,9 @@ native children when that view detaches. It does not install an overlay.
 
 ## Compatibility notes
 
-The hook targets `com.android.systemui.battery.BatteryMeterView`. If a future
-ROM replaces the stock battery with a different Compose-only container or
-another class, the module leaves that view unchanged. There is no device
+The primary hook targets `PhoneStatusBarViewController.onViewAttached` and adds
+the icon to `system_icons`. If that controller does not exist, it falls back to
+`BatteryMeterView`. If both are absent on a ROM, no icon can be added. There is no device
 build/test in this package; a successful Actions compile does not prove
 behavior on a specific Infinity-X release. If it does not appear, capture
 LSPosed logs containing `BatteryGradient` and your Android/ROM build details.

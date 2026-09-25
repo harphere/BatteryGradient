@@ -5,7 +5,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.database.ContentObserver;
-import android.graphics.drawable.Drawable;
 import android.os.BatteryManager;
 import android.os.Handler;
 import android.os.Looper;
@@ -13,7 +12,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.WeakHashMap;
@@ -31,6 +29,33 @@ public final class BatteryModule implements IXposedHookLoadPackage {
 
     @Override public void handleLoadPackage(XC_LoadPackage.LoadPackageParam param) {
         if (!UI.equals(param.packageName)) return;
+        Class<?> controller = XposedHelpers.findClassIfExists(
+                "com.android.systemui.statusbar.phone.PhoneStatusBarViewController",
+                param.classLoader);
+        if (controller != null) {
+            XposedBridge.hookAllMethods(controller, "onViewAttached", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    try {
+                        View root = (View) XposedHelpers.getObjectField(p.thisObject, "mView");
+                        if (root != null) root.post(() -> installInStatusBar(root));
+                    } catch (Throwable error) {
+                        XposedBridge.log("BatteryGradient: status bar attach unavailable: " + error);
+                    }
+                }
+            });
+            XposedBridge.hookAllMethods(controller, "onViewDetached", new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    try {
+                        View root = (View) XposedHelpers.getObjectField(p.thisObject, "mView");
+                        ViewGroup container = findSystemIcons(root);
+                        if (container != null) uninstall(container);
+                    } catch (Throwable ignored) { }
+                }
+            });
+            XposedBridge.log("BatteryGradient: PhoneStatusBarViewController hook ready");
+            return;
+        }
+        XposedBridge.log("BatteryGradient: status bar controller absent; trying legacy battery view");
         Class<?> battery = XposedHelpers.findClassIfExists(
                 "com.android.systemui.battery.BatteryMeterView", param.classLoader);
         if (battery == null) {
@@ -74,7 +99,7 @@ public final class BatteryModule implements IXposedHookLoadPackage {
             if (!group.isAttachedToWindow() || HOLDERS.containsKey(group)) return;
             // Preserve ROMs with an unexpected empty battery container.
             if (group.getChildCount() == 0) return;
-            Holder holder = new Holder(group);
+            Holder holder = new Holder(group, true, null);
             HOLDERS.put(group, holder);
             holder.attach();
         } catch (Throwable error) {
@@ -88,8 +113,38 @@ public final class BatteryModule implements IXposedHookLoadPackage {
         if (holder != null) holder.detach();
     }
 
+    private static ViewGroup findSystemIcons(View root) {
+        if (root == null) return null;
+        int id = root.getResources().getIdentifier("system_icons", "id", UI);
+        View view = id == 0 ? null : root.findViewById(id);
+        return view instanceof ViewGroup ? (ViewGroup) view : null;
+    }
+
+    private static void installInStatusBar(View root) {
+        try {
+            if (!root.isAttachedToWindow()) return;
+            ViewGroup container = findSystemIcons(root);
+            if (container == null || HOLDERS.containsKey(container)) {
+                if (container == null) XposedBridge.log("BatteryGradient: system_icons container absent");
+                return;
+            }
+            int batteryId = root.getResources().getIdentifier("battery", "id", UI);
+            View stock = batteryId == 0 ? null : root.findViewById(batteryId);
+            Holder holder = new Holder(container, false, stock);
+            HOLDERS.put(container, holder);
+            holder.attach();
+            XposedBridge.log("BatteryGradient: status bar icon attached");
+        } catch (Throwable error) {
+            XposedBridge.log("BatteryGradient: status bar icon unavailable: " + error);
+            ViewGroup group = findSystemIcons(root);
+            if (group != null) uninstall(group);
+        }
+    }
+
     private static final class Holder {
         final ViewGroup group;
+        final boolean insideStockBattery;
+        final View stockBattery;
         final ImageView icon;
         final GradientBatteryDrawable drawable = new GradientBatteryDrawable();
         final IdentityHashMap<View, Integer> nativeVisibility = new IdentityHashMap<>();
@@ -112,8 +167,10 @@ public final class BatteryModule implements IXposedHookLoadPackage {
         };
         boolean listening;
 
-        Holder(ViewGroup group) {
+        Holder(ViewGroup group, boolean insideStockBattery, View stockBattery) {
             this.group = group;
+            this.insideStockBattery = insideStockBattery;
+            this.stockBattery = stockBattery;
             icon = new ImageView(group.getContext());
             icon.setImageDrawable(drawable);
             icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
@@ -142,6 +199,14 @@ public final class BatteryModule implements IXposedHookLoadPackage {
         void readStyle() { drawable.setStyle(SettingsProvider.getStyle(group.getContext())); }
 
         void hideNative() {
+            if (!insideStockBattery) {
+                if (stockBattery != null) {
+                    if (!nativeVisibility.containsKey(stockBattery))
+                        nativeVisibility.put(stockBattery, stockBattery.getVisibility());
+                    stockBattery.setVisibility(View.GONE);
+                }
+                return;
+            }
             for (int i = 0; i < group.getChildCount(); i++) {
                 View child = group.getChildAt(i);
                 if (child == icon) continue;
@@ -159,7 +224,7 @@ public final class BatteryModule implements IXposedHookLoadPackage {
             catch (Throwable ignored) { }
             if (icon.getParent() == group) group.removeView(icon);
             for (Map.Entry<View, Integer> entry : nativeVisibility.entrySet()) {
-                if (entry.getKey().getParent() == group)
+                if (entry.getKey().getParent() != null)
                     entry.getKey().setVisibility(entry.getValue());
             }
             nativeVisibility.clear();
