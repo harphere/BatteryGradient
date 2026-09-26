@@ -72,7 +72,10 @@ public final class BatteryModule implements IXposedHookLoadPackage {
             @Override protected void afterHookedMethod(MethodHookParam p) {
                 if (!(p.thisObject instanceof ViewGroup)) return;
                 ViewGroup group = (ViewGroup) p.thisObject;
-                group.post(() -> install(group));
+                group.post(() -> {
+                    install(group);
+                    refreshForBattery(group);
+                });
             }
         });
         XposedBridge.hookAllMethods(battery, "onDetachedFromWindow", new XC_MethodHook() {
@@ -93,6 +96,7 @@ public final class BatteryModule implements IXposedHookLoadPackage {
                             h.hideNative();
                             h.icon.setImageDrawable(h.drawable);
                         }
+                        group.post(() -> refreshForBattery(group));
                     }
                 });
             } catch (Throwable ignored) { /* ROM-specific method absent. */ }
@@ -115,6 +119,9 @@ public final class BatteryModule implements IXposedHookLoadPackage {
     private static void install(ViewGroup group) {
         try {
             if (!group.isAttachedToWindow() || HOLDERS.containsKey(group)) return;
+            // The status-bar holder owns battery views even when Iconify places
+            // them in a separate row. Avoid a second icon inside that view.
+            if (findSystemIcons(group.getRootView()) != null) return;
             for (View parent = group.getParent() instanceof View
                     ? (View) group.getParent() : null; parent != null;
                     parent = parent.getParent() instanceof View ? (View) parent.getParent() : null) {
@@ -134,6 +141,15 @@ public final class BatteryModule implements IXposedHookLoadPackage {
             report("Battery view attach failed: " + error.getClass().getSimpleName());
             uninstall(group);
         }
+    }
+
+    private static void refreshForBattery(View battery) {
+        // A newly inflated native BatteryMeterView can live outside the old
+        // system_icons row after Iconify swaps the end side.
+        View root = battery.getRootView();
+        ViewGroup icons = findSystemIcons(root);
+        Holder holder = icons == null ? null : HOLDERS.get(icons);
+        if (holder != null && !holder.insideStockBattery) holder.adoptBattery(battery);
     }
 
     private static void uninstall(ViewGroup group) {
@@ -183,8 +199,7 @@ public final class BatteryModule implements IXposedHookLoadPackage {
         ViewTreeObserver.OnGlobalLayoutListener listener = () -> {
             try {
                 if (root.isAttachedToWindow()) {
-                    holder.followStockBattery();
-                    holder.hideNative();
+                    holder.refresh(root);
                 }
             } catch (Throwable error) {
                 XposedBridge.log("BatteryGradient: row update failed: " + error);
@@ -203,7 +218,7 @@ public final class BatteryModule implements IXposedHookLoadPackage {
     private static final class Holder {
         final ViewGroup group;
         final boolean insideStockBattery;
-        final View stockBattery;
+        View stockBattery;
         final ImageView icon;
         final GradientBatteryDrawable drawable = new GradientBatteryDrawable();
         final IdentityHashMap<View, Integer> nativeVisibility = new IdentityHashMap<>();
@@ -263,6 +278,24 @@ public final class BatteryModule implements IXposedHookLoadPackage {
 
         void readStyle() { drawable.setStyle(SettingsProvider.getStyle(group.getContext())); }
 
+        void adoptBattery(View battery) {
+            if (!battery.isAttachedToWindow()) return;
+            stockBattery = battery;
+            followStockBattery();
+            hideNative();
+        }
+
+        void refresh(View root) {
+            if (insideStockBattery) return;
+            int id = root.getResources().getIdentifier("battery", "id", UI);
+            View candidate = id == 0 ? null : root.findViewById(id);
+            if (candidate != null && candidate.isAttachedToWindow()
+                    && (stockBattery == null || !stockBattery.isAttachedToWindow()
+                    || candidate.getVisibility() == View.VISIBLE)) stockBattery = candidate;
+            followStockBattery();
+            hideNative();
+        }
+
         void followStockBattery() {
             // Iconify swaps battery and system-icon regions between rows.
             // Follow the actual native battery parent after each layout.
@@ -291,7 +324,8 @@ public final class BatteryModule implements IXposedHookLoadPackage {
                 if (stockBattery != null) {
                     if (!nativeVisibility.containsKey(stockBattery))
                         nativeVisibility.put(stockBattery, stockBattery.getVisibility());
-                    stockBattery.setVisibility(View.GONE);
+                    if (stockBattery.getVisibility() != View.GONE)
+                        stockBattery.setVisibility(View.GONE);
                 }
                 return;
             }

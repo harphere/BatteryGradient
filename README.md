@@ -1,4 +1,4 @@
-# Battery Gradient 1.0.7
+# Battery Gradient 1.0.8
 
 Standalone **LSPosed** battery icon module for Pixel/AOSP SystemUI. Intended for
 Android 16 on Pixel 8 Pro with Infinity-X; also targets Android 12 and later.
@@ -21,10 +21,10 @@ Magisk overlay are used by this APK.
    at the repository root. Keep `.github/workflows/build.yml` in place.
 2. Open **Actions → Build Battery Gradient APK → Run workflow**.
 3. When the job finishes, open its run and download the artifact named
-   **BatteryGradient-v1.0.7** at the bottom of the run summary. Inside is
-   `BatteryGradient-v1.0.7.apk`.
+   **BatteryGradient-v1.0.8** at the bottom of the run summary. Inside is
+   `BatteryGradient-v1.0.8.apk`.
 
-The source archive is `BatteryGradient-v1.0.7.zip`. GitHub downloads the
+The source archive is `BatteryGradient-v1.0.8.zip`. GitHub downloads the
 artifact as a ZIP with that same name; its contents are the versioned APK.
 
 The app's version name and code live in `gradle.properties`. The workflow uses
@@ -40,9 +40,9 @@ upgradable. Do not treat this key as a production signing secret.
 
 **Upgrading from 1.0.0:** GitHub may sign the old APK with a different temporary
 debug key. If Android rejects the update with a signing or update-incompatible
-error, uninstall Battery Gradient 1.0.0, install 1.0.7, re-enable its System UI
+error, uninstall Battery Gradient 1.0.0, install 1.0.8, re-enable its System UI
 scope in LSPosed, and restart System UI. Later builds from this source use the
-same debug signing key. Versions 1.0.1 through 1.0.4 can update directly to 1.0.7.
+same debug signing key. Versions 1.0.1 through 1.0.4 can update directly to 1.0.8.
 
 ## Install and use
 
