@@ -24,7 +24,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public final class BatteryModule implements IXposedHookLoadPackage {
     private static final String UI = "com.android.systemui";
     private static final Map<ViewGroup, Holder> HOLDERS = new WeakHashMap<>();
-    private static final Map<View, ViewTreeObserver.OnGlobalLayoutListener> ROOT_LISTENERS = new WeakHashMap<>();
+    private static final Map<View, ViewTreeObserver.OnGlobalLayoutListener> WATCHERS = new WeakHashMap<>();
 
     @Override public void handleLoadPackage(XC_LoadPackage.LoadPackageParam param) {
         if (!UI.equals(param.packageName)) return;
@@ -167,7 +167,7 @@ public final class BatteryModule implements IXposedHookLoadPackage {
             Holder holder = new Holder(container, false, stock);
             HOLDERS.put(container, holder);
             holder.attach();
-            watch(root);
+            watch(root, holder);
             XposedBridge.log("BatteryGradient: status bar icon attached");
             report("Status bar icon attached");
         } catch (Throwable error) {
@@ -178,25 +178,24 @@ public final class BatteryModule implements IXposedHookLoadPackage {
         }
     }
 
-    /** Track layout reinflation and Iconify's movement of the native battery between rows. */
-    private static void watch(View root) {
-        if (ROOT_LISTENERS.containsKey(root)) return;
+    private static void watch(View root, Holder holder) {
+        if (WATCHERS.containsKey(root)) return;
         ViewTreeObserver.OnGlobalLayoutListener listener = () -> {
-            ViewGroup container = findSystemIcons(root);
-            if (container == null) return;
-            Holder holder = HOLDERS.get(container);
-            if (holder == null) {
-                installInStatusBar(root);
-                return;
+            try {
+                if (root.isAttachedToWindow()) {
+                    holder.followStockBattery();
+                    holder.hideNative();
+                }
+            } catch (Throwable error) {
+                XposedBridge.log("BatteryGradient: row update failed: " + error);
             }
-            holder.moveToActiveRow();
         };
-        ROOT_LISTENERS.put(root, listener);
+        WATCHERS.put(root, listener);
         root.getViewTreeObserver().addOnGlobalLayoutListener(listener);
     }
 
     private static void stopWatching(View root) {
-        ViewTreeObserver.OnGlobalLayoutListener listener = ROOT_LISTENERS.remove(root);
+        ViewTreeObserver.OnGlobalLayoutListener listener = WATCHERS.remove(root);
         if (listener != null && root.getViewTreeObserver().isAlive())
             root.getViewTreeObserver().removeOnGlobalLayoutListener(listener);
     }
@@ -230,7 +229,6 @@ public final class BatteryModule implements IXposedHookLoadPackage {
             }
         };
         boolean listening;
-        ViewGroup iconRow;
 
         Holder(ViewGroup group, boolean insideStockBattery, View stockBattery) {
             this.group = group;
@@ -246,7 +244,7 @@ public final class BatteryModule implements IXposedHookLoadPackage {
             Context context = group.getContext();
             int px = Math.round(24 * context.getResources().getDisplayMetrics().density);
             if (!insideStockBattery) {
-                moveToActiveRow();
+                followStockBattery();
             } else if (group instanceof LinearLayout) {
                 LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(px, px);
                 lp.gravity = android.view.Gravity.CENTER_VERTICAL;
@@ -263,22 +261,22 @@ public final class BatteryModule implements IXposedHookLoadPackage {
             listening = true;
         }
 
-        void moveToActiveRow() {
-            // Iconify can move the stock BatteryMeterView into either row. Follow its
-            // actual parent, without depending on Iconify preference keys or IDs.
-            ViewGroup target = group;
-            if (stockBattery != null && stockBattery.getParent() instanceof ViewGroup) {
-                ViewGroup parent = (ViewGroup) stockBattery.getParent();
-                if (parent.isAttachedToWindow()) target = parent;
-            }
-            int last = target.getChildCount() - 1;
-            boolean rightmost = icon.getParent() == target &&
-                    target.indexOfChild(icon) == (target.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL ? 0 : last);
-            if (rightmost) return;
+        void readStyle() { drawable.setStyle(SettingsProvider.getStyle(group.getContext())); }
+
+        void followStockBattery() {
+            // Iconify swaps battery and system-icon regions between rows.
+            // Follow the actual native battery parent after each layout.
+            ViewGroup target = stockBattery != null && stockBattery.getParent() instanceof ViewGroup
+                    ? (ViewGroup) stockBattery.getParent() : group;
+            if (!target.isAttachedToWindow() && target != group) return;
+            int finalIndex = target.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL
+                    ? 0 : target.getChildCount() - 1;
+            if (icon.getParent() == target && target.indexOfChild(icon) == finalIndex) return;
             if (icon.getParent() instanceof ViewGroup)
                 ((ViewGroup) icon.getParent()).removeView(icon);
-            int px = Math.round(24 * group.getResources().getDisplayMetrics().density);
-            int index = target.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL ? 0 : target.getChildCount();
+            int px = Math.round(24 * target.getResources().getDisplayMetrics().density);
+            int index = target.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL
+                    ? 0 : target.getChildCount();
             if (target instanceof LinearLayout) {
                 LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(px, px);
                 lp.gravity = android.view.Gravity.CENTER_VERTICAL;
@@ -286,10 +284,7 @@ public final class BatteryModule implements IXposedHookLoadPackage {
             } else {
                 target.addView(icon, index, new ViewGroup.LayoutParams(px, px));
             }
-            iconRow = target;
         }
-
-        void readStyle() { drawable.setStyle(SettingsProvider.getStyle(group.getContext())); }
 
         void hideNative() {
             if (!insideStockBattery) {
